@@ -38,13 +38,15 @@ type errorQueryEncoder struct {
 	errorAt int
 }
 
+var errQueryEncoder = errors.New("failed")
+
 func (q *errorQueryEncoder) Escape(s string) string {
 	return s
 }
 func (q *errorQueryEncoder) UnEscape(s string) (string, error) {
 	q.times++
 	if q.times >= q.errorAt {
-		return "", errors.New("failed")
+		return "", errQueryEncoder
 	}
 	return s, nil
 }
@@ -233,7 +235,8 @@ func TestParser_Unmarshal_UnmatchedDataFormat(t *testing.T) {
 	if err == nil {
 		t.Error("error should not be ignored")
 	}
-	if _, ok := err.(ErrTranslated); !ok {
+	var errT ErrTranslated
+	if !errors.As(err, &errT) {
 		t.Errorf("error type is unexpected. %v", err)
 	}
 }
@@ -247,7 +250,8 @@ func TestParser_Unmarshal_UnhandledType(t *testing.T) {
 	if err == nil {
 		t.Error("error should not be ignored")
 	}
-	if _, ok := err.(ErrInvalidMapKeyType); !ok {
+	var errMKT ErrInvalidMapKeyType
+	if !errors.As(err, &errMKT) {
 		t.Errorf("error type is unexpected. %v", err)
 	}
 }
@@ -267,7 +271,8 @@ func TestParser_Unmarshal_UnhandledType2(t *testing.T) {
 	if err == nil {
 		t.Error("error should not be ignored")
 	}
-	if _, ok := err.(ErrInvalidMapKeyType); !ok {
+	var errMKT ErrInvalidMapKeyType
+	if !errors.As(err, &errMKT) {
 		t.Errorf("error type is unexpected. %v", err)
 	}
 }
@@ -278,7 +283,7 @@ func TestParser_init(t *testing.T) {
 	parser.resetQueryEncoder()
 	var data = "Id=1&b=a"
 	err := parser.init([]byte(data))
-	if err == nil || err.Error() != "failed" {
+	if err == nil || !errors.Is(err, errQueryEncoder) {
 		t.Error("init error")
 	}
 }
@@ -289,7 +294,7 @@ func TestParser_Unmarshal_InitError(t *testing.T) {
 	v := &TestUnhandled{}
 	var data = "Id=1&b=a"
 	err := parser.Unmarshal([]byte(data), v)
-	if err == nil || err.Error() != "failed" {
+	if err == nil || !errors.Is(err, errQueryEncoder) {
 		t.Error("init error")
 	}
 }
@@ -299,7 +304,8 @@ func TestParser_Unmarshal_NonPointer(t *testing.T) {
 	var data = "Id=1&b=a"
 	v := TestUnhandled{}
 	err := parser.Unmarshal([]byte(data), v)
-	if _, ok := err.(ErrInvalidUnmarshalError); !ok {
+	var errUnmarshal ErrInvalidUnmarshalError
+	if !errors.As(err, &errUnmarshal) {
 		t.Error("unmatched error")
 	}
 }
@@ -310,8 +316,13 @@ func TestParser_Unmarshal_MapKey_DecodeError(t *testing.T) {
 	var data = "Id=1&b=2"
 	v := &map[string]int{}
 	err := parser.Unmarshal([]byte(data), v)
-	if _, ok := err.(ErrUnhandledType); !ok {
+	var errUT ErrUnhandledType
+	if !errors.As(err, &errUT) {
 		t.Error("unmatched error")
+	}
+	paramName := ParamNameFromError(err)
+	if paramName != "Id" && paramName != "b" {
+		t.Errorf("unexpected param name: %q", paramName)
 	}
 }
 
@@ -321,8 +332,13 @@ func TestParser_Unmarshal_MapValue_DecodeError(t *testing.T) {
 	var data = "Id=1&b=2"
 	v := &map[string]int{}
 	err := parser.Unmarshal([]byte(data), v)
-	if _, ok := err.(ErrUnhandledType); !ok {
+	var errUT ErrUnhandledType
+	if !errors.As(err, &errUT) {
 		t.Error("unmatched error")
+	}
+	paramName := ParamNameFromError(err)
+	if paramName != "Id" && paramName != "b" {
+		t.Errorf("unexpected param name: %q", paramName)
 	}
 }
 
@@ -345,8 +361,13 @@ func TestParser_lookupForSlice(t *testing.T) {
 		Tags []int
 	}{}
 	err := Unmarshal([]byte(data), v)
-	if _, ok := err.(*strconv.NumError); !ok {
+	var errNum *strconv.NumError
+	if !errors.As(err, &errNum) {
 		t.Error("dont failed for wrong slice data")
+	}
+	paramName := ParamNameFromError(err)
+	if paramName != "Tags[s]" {
+		t.Errorf("error did not include param name: expected %s, got %s", "Tags[s]", paramName)
 	}
 }
 
