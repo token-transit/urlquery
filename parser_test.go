@@ -2,6 +2,7 @@ package urlquery
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -15,28 +16,95 @@ type testParseChild struct {
 	Height      int    `query:"-"`
 }
 
+type testParseEncodedString struct {
+	Str string
+}
+
 type testTimeType time.Time
 
+func (tpes *testParseEncodedString) UnmarshalQueryParam(value string) error {
+	tpes.Str = value
+	return nil
+}
+
+type testStrArray3 [3]string
+
+func (tsa3 *testStrArray3) UnmarshalQueryParam(value string) error {
+	strs := strings.Split(value, ",")
+	if len(strs) != 3 {
+		return errors.New("testStrArray3 must have exactly 3 components")
+	}
+	copy(tsa3[:], strs[:3])
+	return nil
+}
+
+type testIgnoreDecoder []string
+
+func (tid testIgnoreDecoder) UnmarshalQueryParam(value string) error {
+	strs := strings.Split(value, ",")
+	copy(tid, strs)
+	return nil
+}
+
+type testEncodedMap map[string]string
+
+func (tem testEncodedMap) UnmarshalQueryParam(value string) error {
+	if tem == nil {
+		return errors.New("cannot call unmarhsal query param on an uninitialized map")
+	}
+	parts := strings.Split(value, ",")
+	for _, p := range parts {
+		queryValue := strings.Split(p, "=")
+		if len(queryValue) != 2 {
+			return fmt.Errorf("error parsing map value %q does not have single =", p)
+		}
+		if queryValue[0] == "" {
+			return fmt.Errorf("query value key is empty")
+		}
+		tem[queryValue[0]] = tem[queryValue[1]]
+	}
+	return nil
+}
+
+func (tem testEncodedMap) MarshalQueryParam() string {
+	var sb strings.Builder
+	for k, v := range tem {
+		if sb.Len() > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(k)
+		sb.WriteString("=")
+		sb.WriteString(v)
+	}
+	return sb.String()
+}
+
 type testParseInfo struct {
-	Id       int
-	Name     string           `query:"name"`
-	Child    testParseChild   `query:"child"`
-	ChildPtr *testParseChild  `query:"childPtr"`
-	Children []testParseChild `query:"children"`
-	Params   map[byte]int8
-	status   bool
-	UintPtr  uintptr
-	Tags     []int16 `query:"tags"`
-	Int64    int64
-	Uint     uint
-	Uint32   uint32
-	Float32  float32
-	Float64  float64
-	Bool     bool
-	Inter    interface{}  `query:"inter"`
-	Time     time.Time    `query:"time"`
-	TimePtr  *time.Time   `query:"time_ptr"`
-	AlsoTime testTimeType `query:"also_time"`
+	Id               int
+	Name             string           `query:"name"`
+	Child            testParseChild   `query:"child"`
+	ChildPtr         *testParseChild  `query:"childPtr"`
+	Children         []testParseChild `query:"children"`
+	Params           map[byte]int8
+	status           bool
+	UintPtr          uintptr
+	Tags             []int16 `query:"tags"`
+	Int64            int64
+	Uint             uint
+	Uint32           uint32
+	Float32          float32
+	Float64          float64
+	Bool             bool
+	Inter            interface{}             `query:"inter"`
+	Time             time.Time               `query:"time"`
+	TimePtr          *time.Time              `query:"time_ptr"`
+	AlsoTime         testTimeType            `query:"also_time"`
+	EncodedString    testParseEncodedString  `query:"encoded_string"`
+	EncodedStringPtr *testParseEncodedString `query:"encoded_string_ptr"`
+	EncodedMap       testEncodedMap          `query:"tem"`
+	EncodedMapPtr    *testEncodedMap         `query:"tem_ptr"`
+	StrArray3        testStrArray3           `query:"strarr3"`
+	IgnoreDecoder    testIgnoreDecoder       `query:"ignore_decoder"`
 }
 
 type testReplacementTimeDecoder struct{}
@@ -98,10 +166,15 @@ func TestParser_Unmarshal_DuplicateCall(t *testing.T) {
 }
 
 func TestParser_Unmarshal_NestedStructure(t *testing.T) {
+	tem := testEncodedMap{}
+	tem["foo"] = "bar"
+	tem["baz"] = "quux"
 	var data = "Id=1&name=test&child[desc]=c1&child[Long]=10&childPtr[Long]=2&childPtr[Description]=b" +
 		"&children[0][desc]=d1&children[1][Long]=12&children[5][desc]=d5&children[5][Long]=50&desc=rtt" +
 		"&Params[120]=1&Params[121]=2&status=1&UintPtr=300&tags[]=1&tags[]=2&Int64=64&Uint=22&Uint32=5&Float32=1.3" +
-		"&Float64=5.64&Bool=0&inter=ss&time=2024-01-02T18:30:22Z&time_ptr=2024-01-03T11:00:01Z&also_time=2024-01-02T03:04:05Z"
+		"&Float64=5.64&Bool=0&inter=ss&time=2024-01-02T18:30:22Z&time_ptr=2024-01-03T11:00:01Z&also_time=2024-01-02T03:04:05Z" +
+		"&encoded_string=foo&encoded_string_ptr=bar&tem=" + tem.MarshalQueryParam() + "&tem_ptr=" + tem.MarshalQueryParam() +
+		"&strarr3=foo,bar,baz&ignore_decoder[0]=foo&ignore_decoder[2]=baz"
 	data = encodeSquareBracket(data)
 	v := &testParseInfo{}
 	err := Unmarshal([]byte(data), v)
@@ -175,6 +248,26 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 	if !time.Time(v.AlsoTime).Equal(alsoTime) {
 		t.Errorf("time is wrong: expected %v, got %v", alsoTime, v.AlsoTime)
 	}
+	if v.EncodedString.Str != "foo" {
+		t.Errorf("encoded string is wrong: expected %q, got %q", "foo", v.EncodedString.Str)
+	}
+	if v.EncodedStringPtr == nil {
+		t.Error("encoded string pointer is nil")
+	} else if v.EncodedStringPtr.Str != "bar" {
+		t.Errorf("encoded string pointer is wrong: expected %q, got %q", "bar", v.EncodedStringPtr.Str)
+	}
+	if len(v.EncodedMap) != 2 {
+		t.Error("invalid parse of encoded map")
+	}
+	if v.EncodedMapPtr == nil || len(*v.EncodedMapPtr) != 2 {
+		t.Error("invalid parse of encoded map pointer")
+	}
+	if v.StrArray3[0] != "foo" || v.StrArray3[1] != "bar" || v.StrArray3[2] != "baz" {
+		t.Errorf("invalid parse of testStrArray3: %+v", v.StrArray3)
+	}
+	if len(v.IgnoreDecoder) != 3 || v.IgnoreDecoder[0] != "foo" || v.IgnoreDecoder[2] != "baz" {
+		t.Errorf("invalid parse of IgnoreDecoder: %+v", v.IgnoreDecoder)
+	}
 }
 
 func TestParser_Unmarshal_Map(t *testing.T) {
@@ -237,6 +330,21 @@ func TestParser_Unmarshal_Array_Failed(t *testing.T) {
 
 	if err == nil {
 		t.Error("dont return error")
+	}
+}
+
+func TestParser_Unmarshal_StrArray3(t *testing.T) {
+	foo := struct {
+		Arr3 testStrArray3 `query:"arr3"`
+	}{}
+	data := "arr3=foo,bar,baz,quux"
+	err := Unmarshal([]byte(data), &foo)
+
+	if err == nil {
+		t.Error("expected error but got none")
+	}
+	if ParamNameFromError(err) != "arr3" {
+		t.Error("expected error for param \"arr3\" but did not get it")
 	}
 }
 
