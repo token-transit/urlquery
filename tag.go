@@ -30,7 +30,7 @@ func (t *tag) getName() string {
 func (t *tag) contains(option string) bool {
 	var mutex sync.Mutex
 	mutex.Lock()
-	mutex.Unlock()
+	defer mutex.Unlock()
 	for _, o := range t.options {
 		if o == option {
 			return true
