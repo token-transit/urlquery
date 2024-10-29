@@ -3,6 +3,7 @@ package urlquery
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -66,6 +67,21 @@ func (p *parser) init(data []byte) (err error) {
 		}
 	}
 	return
+}
+
+func (p *parser) initValues(urlValues url.Values) {
+	for key, values := range urlValues {
+		l := len(key)
+		if l > 2 && key[l-2:] == "[]" {
+			key = key[:l-2]
+			for i, v := range values {
+				newKey := key + "[" + strconv.Itoa(i) + "]"
+				p.container[newKey] = v
+			}
+		} else {
+			p.container[key] = values[0]
+		}
+	}
 }
 
 // reset specified query encoder
@@ -375,6 +391,25 @@ func (p *parser) RegisterValueDecoder(valueDecoder ValueDecoder) {
 	}
 }
 
+func (p *parser) UnmarshalValues(values url.Values, v interface{}) (err error) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	p.container = map[string]string{}
+	p.err = nil
+	p.resetQueryEncoder()
+
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return ErrInvalidUnmarshalError{}
+	}
+
+	p.initValues(values)
+	p.parse(rv, "")
+	p.container = nil
+	return p.err
+}
+
 // Unmarshal is supposed to decode string to go structure
 // It is thread safety
 func (p *parser) Unmarshal(data []byte, v interface{}) (err error) {
@@ -404,8 +439,15 @@ func (p *parser) Unmarshal(data []byte, v interface{}) (err error) {
 }
 
 // Unmarshal is supposed to decode string to go structure
-// It is thread safety
+// It is threadsafe
 func Unmarshal(data []byte, v interface{}) error {
 	p := NewParser()
 	return p.Unmarshal(data, v)
+}
+
+// Unmarshal is supposed to decode string to go structure
+// It is threadsafe
+func UnmarshalValues(urlValues url.Values, v interface{}) error {
+	p := NewParser()
+	return p.UnmarshalValues(urlValues, v)
 }
