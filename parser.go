@@ -99,7 +99,7 @@ func (p *parser) genNextParentNode(parentNode, key string) string {
 }
 
 // iteratively parse go structure from string
-func (p *parser) parse(rv reflect.Value, parentNode string) {
+func (p *parser) parse(rv reflect.Value, parentNode string) (found bool) {
 	if p.err != nil {
 		return
 	}
@@ -108,32 +108,32 @@ func (p *parser) parse(rv reflect.Value, parentNode string) {
 	// just be decoded immediately
 	kind := rv.Kind()
 	if kind != reflect.Invalid && p.canImmediatelyDecode(rv.Type()) {
-		p.parseValue(rv, parentNode)
-		return
+		return p.parseValue(rv, parentNode)
 	}
 
 	switch kind {
 	case reflect.Ptr:
-		p.parseForPrt(rv, parentNode)
+		found = p.parseForPrt(rv, parentNode) || found
 	case reflect.Interface:
-		p.parse(rv.Elem(), parentNode)
+		found = p.parse(rv.Elem(), parentNode) || found
 	case reflect.Map:
-		p.parseForMap(rv, parentNode)
+		found = p.parseForMap(rv, parentNode) || found
 	case reflect.Array:
 		for i := 0; i < rv.Cap(); i++ {
-			p.parse(rv.Index(i), p.genNextParentNode(parentNode, strconv.Itoa(i)))
+			found = p.parse(rv.Index(i), p.genNextParentNode(parentNode, strconv.Itoa(i))) || found
 		}
 	case reflect.Slice:
-		p.parseForSlice(rv, parentNode)
+		found = p.parseForSlice(rv, parentNode) || found
 	case reflect.Struct:
-		p.parseForStruct(rv, parentNode)
+		found = p.parseForStruct(rv, parentNode) || found
 	default:
-		p.parseValue(rv, parentNode)
+		found = p.parseValue(rv, parentNode) || found
 	}
+	return found
 }
 
 // parse for pointer value
-func (p *parser) parseForPrt(rv reflect.Value, parentNode string) {
+func (p *parser) parseForPrt(rv reflect.Value, parentNode string) (found bool) {
 	//If Ptr is nil and can be set, Ptr should be initialized
 	if rv.IsNil() {
 		if rv.CanSet() {
@@ -142,15 +142,16 @@ func (p *parser) parseForPrt(rv reflect.Value, parentNode string) {
 			matches := p.lookup(parentNode)
 			// If none match keep nil
 			if len(matches) == 0 {
-				return
+				return false
 			}
 
 			rv.Set(reflect.New(rv.Type().Elem()))
-			p.parse(rv.Elem(), parentNode)
+			found = p.parse(rv.Elem(), parentNode) || found
 		}
 	} else {
-		p.parse(rv.Elem(), parentNode)
+		found = p.parse(rv.Elem(), parentNode) || found
 	}
+	return
 }
 
 // reconstruct key name from parts
@@ -162,7 +163,7 @@ func keyName(prefix string, index string) string {
 }
 
 // parse for map value
-func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
+func (p *parser) parseForMap(rv reflect.Value, parentNode string) (found bool) {
 	if !rv.CanSet() {
 		return
 	}
@@ -194,6 +195,7 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
 			continue
 		}
 
+		found = true
 		reflectValue, err := p.decode(rv.Type().Elem(), value)
 		if err != nil {
 			p.err = ErrInvalidParamValue{val: value, key: keyName(parentNode, k), err: err}
@@ -202,11 +204,15 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
 
 		mapReflect.SetMapIndex(reflectKey, reflectValue)
 	}
-	rv.Set(mapReflect)
+	// actually we only want to replace the nil map if we actually found a value in the map.
+	if found {
+		rv.Set(mapReflect)
+	}
+	return
 }
 
 // parse for slice value
-func (p *parser) parseForSlice(rv reflect.Value, parentNode string) {
+func (p *parser) parseForSlice(rv reflect.Value, parentNode string) (found bool) {
 	if !rv.CanSet() {
 		return
 	}
@@ -228,24 +234,29 @@ func (p *parser) parseForSlice(rv reflect.Value, parentNode string) {
 		}
 	}
 
-	//If slice is nil or cap of slice is less than max cap, slice should be reset correctly
-	if rv.IsNil() || maxCap > rv.Cap() {
-		rv.Set(reflect.MakeSlice(rv.Type(), maxCap, maxCap))
+	// We always create a new slice because we want to maintain the old slice exactly if parse is wrong.
+	sliceVal := reflect.MakeSlice(rv.Type(), maxCap, maxCap)
+	if !rv.IsNil() {
+		reflect.Copy(sliceVal, rv)
 	}
 
 	for i := range matches {
-		p.parse(rv.Index(i), p.genNextParentNode(parentNode, strconv.Itoa(i)))
+		found = p.parse(sliceVal.Index(i), p.genNextParentNode(parentNode, strconv.Itoa(i))) || found
 	}
+	if found {
+		rv.Set(sliceVal)
+	}
+	return
 }
 
 // parse for struct value
-func (p *parser) parseForStruct(rv reflect.Value, parentNode string) {
+func (p *parser) parseForStruct(rv reflect.Value, parentNode string) (found bool) {
 	for i := 0; i < rv.NumField(); i++ {
 		ft := rv.Type().Field(i)
 
 		//specially handle anonymous fields
 		if ft.Anonymous && rv.Field(i).Kind() == reflect.Struct {
-			p.parse(rv.Field(i), parentNode)
+			found = p.parse(rv.Field(i), parentNode) || found
 			continue
 		}
 
@@ -261,12 +272,29 @@ func (p *parser) parseForStruct(rv reflect.Value, parentNode string) {
 			name = ft.Name
 		}
 
-		p.parse(rv.Field(i), p.genNextParentNode(parentNode, name))
+		nodeName := p.genNextParentNode(parentNode, name)
+		required := t.contains("required")
+		if required {
+			if len(p.lookup(nodeName)) == 0 {
+				if p.err == nil {
+					p.err = ErrMissingRequiredParam{key: nodeName}
+				}
+				return
+			}
+		}
+		found = p.parse(rv.Field(i), nodeName) || found
+		if required && !found {
+			if p.err == nil {
+				p.err = ErrMissingRequiredParam{key: nodeName}
+			}
+			return
+		}
 	}
+	return
 }
 
 // parse text to specified-type value, set into rv
-func (p *parser) parseValue(rv reflect.Value, parentNode string) {
+func (p *parser) parseValue(rv reflect.Value, parentNode string) (found bool) {
 	if !rv.CanSet() {
 		return
 	}
@@ -276,6 +304,7 @@ func (p *parser) parseValue(rv reflect.Value, parentNode string) {
 		return
 	}
 
+	found = true
 	typ := rv.Type()
 	v, err := p.decode(typ, value)
 	if err != nil {
@@ -289,11 +318,12 @@ func (p *parser) parseValue(rv reflect.Value, parentNode string) {
 		if rv.CanConvert(t) {
 			v = v.Convert(typ)
 		} else {
-			p.err = ErrUnhandledType{rv.Type()}
+			p.err = ErrInvalidParamValue{key: parentNode, val: value, err: ErrUnhandledType{rv.Type()}}
 			return
 		}
 	}
 	rv.Set(v)
+	return
 }
 
 func (p *parser) canImmediatelyDecode(typ reflect.Type) bool {
@@ -353,6 +383,10 @@ func (p *parser) lookup(prefix string) map[string]bool {
 	data := map[string]bool{}
 	for k := range p.container {
 		if strings.HasPrefix(k, prefix) {
+			suf := k[len(prefix):]
+			if prefix != "" && len(suf) > 0 && !strings.HasPrefix(k[len(prefix):], "[") {
+				continue
+			}
 			pre, _ := unpackQueryKey(k[len(prefix):])
 			data[pre] = true
 		}
