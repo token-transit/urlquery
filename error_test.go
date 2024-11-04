@@ -38,6 +38,63 @@ func TestIsMissingParamError(t *testing.T) {
 	}
 }
 
+func TestIsInvalidParamError(t *testing.T) {
+	testCases := []struct {
+		err    error
+		result bool
+	}{{
+		err:    nil,
+		result: false,
+	}, {
+		err:    ErrInvalidParamKey{key: "foo"},
+		result: true,
+	}, {
+		err:    ErrInvalidParamValue{key: "foo", val: "bar"},
+		result: true,
+	}, {
+		err:    ErrMissingRequiredParam{key: "foo"},
+		result: false,
+	}}
+	for i, tc := range testCases {
+		if res := IsInvalidParamError(tc.err); res != tc.result {
+			t.Errorf("testCases[%d]: unexpected IsMissingParamError result for %v: expected %t, got %t", i, tc.err, tc.result, res)
+		}
+	}
+}
+
+func TestIsInvalidDestinationValueError(t *testing.T) {
+	testCases := []struct {
+		err    error
+		result bool
+	}{{
+		err:    nil,
+		result: false,
+	}, {
+		err:    ErrInvalidParamKey{key: "foo"},
+		result: false,
+	}, {
+		err:    ErrInvalidParamValue{key: "foo", val: "bar"},
+		result: false,
+	}, {
+		err:    ErrMissingRequiredParam{key: "foo"},
+		result: false,
+	}, {
+		err:    ErrInvalidMapKeyType{key: "foo", typ: reflect.TypeOf("")},
+		result: true,
+	}, {
+		err:    ErrInvalidMapValueType{key: "foo", typ: reflect.TypeOf("")},
+		result: true,
+	}, {
+		err:    ErrUnhandledType{typ: reflect.TypeOf("")},
+		result: true,
+	}}
+	for i, tc := range testCases {
+		if res := IsInvalidDestinationValueError(tc.err); res != tc.result {
+			t.Errorf("testCases[%d]: unexpected IsInvalidDestinationValueError for %v: expected %t, got %t", i, tc.err, tc.result, res)
+		}
+	}
+}
+
 func TestParamNameFromError(t *testing.T) {
 	testCases := []struct {
 		err       error
@@ -56,6 +113,12 @@ func TestParamNameFromError(t *testing.T) {
 		paramName: "",
 	}, {
 		err:       ErrMissingRequiredParam{key: "foo"},
+		paramName: "foo",
+	}, {
+		err:       ErrInvalidMapKeyType{key: "foo", typ: reflect.TypeOf(int64(2))},
+		paramName: "foo",
+	}, {
+		err:       ErrInvalidMapValueType{key: "foo", typ: reflect.TypeOf("")},
 		paramName: "foo",
 	}}
 	for i, tc := range testCases {
@@ -102,11 +165,10 @@ func TestErrUnsupportedBitSize_Error(t *testing.T) {
 }
 
 func TestErrInvalidMapKeyType_Error(t *testing.T) {
-	var f float64
-	f = 3.14
+	f := 3.14
 	err := ErrInvalidMapKeyType{typ: reflect.TypeOf(f)}
-	if err.Error() != "failed to handle map key type(float64)" {
-		t.Error(err.Error())
+	if !strings.HasPrefix(err.Error(), "failed to handle map key type") {
+		t.Errorf("expected error to start with %q, instead got %v", "failed to handle map key type", err)
 	}
 }
 
@@ -120,7 +182,7 @@ func TestErrInvalidUnmarshalError_Error(t *testing.T) {
 func TestErrInvalidMapValueType_Error(t *testing.T) {
 	i := uint(2)
 	err := ErrInvalidMapValueType{typ: reflect.TypeOf(i)}
-	if err.Error() != "failed to handle map value type(uint)" {
-		t.Error(err.Error())
+	if !strings.HasPrefix(err.Error(), "failed to handle map value type") {
+		t.Errorf("expected error to start with %q, instead got %v", "failed to handle map value type", err)
 	}
 }

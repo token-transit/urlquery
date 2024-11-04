@@ -23,7 +23,27 @@ func ParamNameFromError(err error) string {
 	if errors.As(err, &errMissing) {
 		return errMissing.key
 	}
+	var errKeyType ErrInvalidMapKeyType
+	if errors.As(err, &errKeyType) {
+		return errKeyType.key
+	}
+	var errValueType ErrInvalidMapValueType
+	if errors.As(err, &errValueType) {
+		return errValueType.key
+	}
 	return ""
+}
+
+func IsInvalidParamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errKey ErrInvalidParamKey
+	if errors.As(err, &errKey) {
+		return true
+	}
+	var errValue ErrInvalidParamValue
+	return errors.As(err, &errValue)
 }
 
 func IsMissingParamError(err error) bool {
@@ -31,7 +51,23 @@ func IsMissingParamError(err error) bool {
 		return false
 	}
 	var errMissing ErrMissingRequiredParam
-	if errors.As(err, &errMissing) {
+	return errors.As(err, &errMissing)
+}
+
+func IsInvalidDestinationValueError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errKeyType ErrInvalidMapKeyType
+	if errors.As(err, &errKeyType) {
+		return true
+	}
+	var errValueType ErrInvalidMapValueType
+	if errors.As(err, &errValueType) {
+		return true
+	}
+	var errUnhandledType ErrUnhandledType
+	if errors.As(err, &errUnhandledType) {
 		return true
 	}
 	return false
@@ -113,18 +149,20 @@ func (e ErrTranslated) Unwrap() error {
 
 // An ErrInvalidMapKeyType is a customized error
 type ErrInvalidMapKeyType struct {
+	key string
 	typ reflect.Type
 }
 
 func (e ErrInvalidMapKeyType) Error() string {
-	return "failed to handle map key type(" + e.typ.String() + ")"
+	return fmt.Sprintf("failed to handle map key type(%s) for key %q", e.typ.String(), e.key)
 }
 
 // An ErrInvalidMapValueType is a customized error
 type ErrInvalidMapValueType struct {
+	key string
 	typ reflect.Type
 }
 
 func (e ErrInvalidMapValueType) Error() string {
-	return "failed to handle map value type(" + e.typ.String() + ")"
+	return fmt.Sprintf("failed to handle map value type(%s) for key %q", e.typ.String(), e.key)
 }

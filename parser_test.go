@@ -481,6 +481,12 @@ func TestParser_Unmarshal_MissingRequiredFields(t *testing.T) {
 			Metadata map[string]string `query:"metadata,required"`
 		}{},
 		missingParam: "metadata",
+	}, {
+		data: "metadata[foo][Long]=0",
+		input: &struct {
+			Metadata map[string]testParseChildRequired `query:"metadata,required"`
+		}{},
+		missingParam: "metadata[foo][desc]",
 	},
 	}
 	for i, tc := range testCases {
@@ -493,6 +499,107 @@ func TestParser_Unmarshal_MissingRequiredFields(t *testing.T) {
 			t.Errorf("testCases[%d]: expected missing param error but got error: %v", i, err)
 		} else if paramName := ParamNameFromError(err); paramName != tc.missingParam {
 			t.Errorf("testCases[%d]: expected missing param %q but got missing param %q", i, tc.missingParam, paramName)
+		}
+	}
+}
+
+func stringP(str string) *string {
+	return &str
+}
+
+func TestParser_Unmarshal_ManyCases(t *testing.T) {
+	noError := func(err error) bool { return err == nil }
+	type typSliceMap struct {
+		SliceMap map[string][]string `query:"sliceMap,required"`
+	}
+	type typNestedMap struct {
+		NestedMap map[string]map[string]map[string]string `query:"nestedMap,required"`
+	}
+	type typWrappedTime struct {
+		Time time.Time `query:"time,required"`
+		Foo  string    `query:"foo"`
+	}
+	type typWrappedTimeMap struct {
+		TimeMap map[string]typWrappedTime `query:"timeMap"`
+	}
+	type typTimeMap struct {
+		TimeMap map[string]time.Time `query:"timeMap,required"`
+	}
+	type typStrPtrMap struct {
+		StrPtrMap *map[string]*string `query:"strPtrMap,required"`
+	}
+	type testCase struct {
+		data           string
+		input          interface{}
+		errorCheck     func(error) bool
+		paramName      string
+		expectedOutput interface{}
+	}
+	testCases := []testCase{{
+		data:           "sliceMap[foo][0]=a&sliceMap[foo][2]=c&sliceMap[bar][]=x&sliceMap[bar][]=y",
+		input:          &typSliceMap{},
+		expectedOutput: &typSliceMap{SliceMap: map[string][]string{"foo": {"a", "", "c"}, "bar": {"x", "y"}}},
+		errorCheck:     noError,
+	}, {
+		data:           "nestedMap[foo][bar][baz]=a&nestedMap[foo][bar2][baz]=a&nestedMap[foo][bar][quux]=b&nestedMap[foo2][bar][baz]=a",
+		input:          &typNestedMap{},
+		expectedOutput: &typNestedMap{NestedMap: map[string]map[string]map[string]string{"foo": {"bar": {"baz": "a", "quux": "b"}, "bar2": {"baz": "a"}}, "foo2": {"bar": {"baz": "a"}}}},
+		errorCheck:     noError,
+	}, {
+		// parameters that aren't relevant are ignored
+		// in this case, map values must be fully specified.
+		data:       "nestedMap[foo]=fooo",
+		input:      &typNestedMap{},
+		errorCheck: IsMissingParamError,
+		paramName:  "nestedMap",
+	}, {
+		data:           "timeMap[foo][time]=2024-04-01T13:44:55Z",
+		input:          &typWrappedTimeMap{},
+		expectedOutput: &typWrappedTimeMap{TimeMap: map[string]typWrappedTime{"foo": {Time: time.Date(2024, 4, 1, 13, 44, 55, 0, time.UTC)}}},
+		errorCheck:     noError,
+	}, {
+		data:       "timeMap[foo][foo]=x",
+		input:      &typWrappedTimeMap{},
+		errorCheck: IsMissingParamError,
+		paramName:  "timeMap[foo][time]",
+	}, {
+		data:           "",
+		input:          &typWrappedTimeMap{},
+		expectedOutput: &typWrappedTimeMap{},
+		errorCheck:     noError,
+	}, {
+		data:           "timeMap[foo]=2024-01-02T3:04:05Z",
+		input:          &typTimeMap{},
+		expectedOutput: &typTimeMap{TimeMap: map[string]time.Time{"foo": time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)}},
+		errorCheck:     noError,
+	}, {
+		data:       "timeMap[foo]=2024-01-02T3:04:05Z&timeMap[bar]=asdf",
+		input:      &typTimeMap{},
+		errorCheck: IsInvalidParamError,
+		paramName:  "timeMap[bar]",
+	}, {
+		data:       "",
+		input:      &typTimeMap{},
+		errorCheck: IsMissingParamError,
+		paramName:  "timeMap",
+	}, {
+		data:       "",
+		input:      &typStrPtrMap{},
+		errorCheck: IsMissingParamError,
+		paramName:  "strPtrMap",
+	}, {
+		data:           "strPtrMap[foo]=bar&strPtrMap[baz]=quux",
+		input:          &typStrPtrMap{},
+		expectedOutput: &typStrPtrMap{StrPtrMap: &map[string]*string{"foo": stringP("bar"), "baz": stringP("quux")}},
+		errorCheck:     noError,
+	}}
+	for i, tc := range testCases {
+		if err := Unmarshal([]byte(tc.data), tc.input); tc.errorCheck != nil && !tc.errorCheck(err) {
+			t.Errorf("testCases[%d]: did not pass error check with error: %v", i, err)
+		} else if paramName := ParamNameFromError(err); paramName != tc.paramName {
+			t.Errorf("testCases[%d]: expected error for param %q but got error for param %q", i, tc.paramName, paramName)
+		} else if tc.expectedOutput != nil && !reflect.DeepEqual(tc.expectedOutput, tc.input) {
+			t.Errorf("testCases[%d]: unexpected output: got %+v, expected %+v", i, tc.input, tc.expectedOutput)
 		}
 	}
 }
@@ -633,24 +740,23 @@ func TestParser_Unmarshal_UnhandledType(t *testing.T) {
 	}
 }
 
-type TestUnhandled struct {
+type TestMapStructValue struct {
 	Id     int
 	Params map[string]testFormat
 }
 
-func TestParser_Unmarshal_UnhandledType2(t *testing.T) {
-	var data = "Id=1&b=a"
+func TestParser_Unmarshal_HandleMapStructValue(t *testing.T) {
+	var data = "Id=1&b=a&Params[foo][Id]=3&Params[bar]=n"
 	data = encodeSquareBracket(data)
-	v := &TestUnhandled{}
+	v := &TestMapStructValue{}
 	parser := NewParser(WithQueryEncoder(defaultQueryEncoder))
 	err := parser.Unmarshal([]byte(data), v)
 
-	if err == nil {
-		t.Error("error should not be ignored")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
-	var errMKT ErrInvalidMapKeyType
-	if !errors.As(err, &errMKT) {
-		t.Errorf("error type is unexpected. %v", err)
+	if v.Params["foo"].Id != 3 || len(v.Params) != 1 {
+		t.Errorf("unexpected map values for Params: %+v", v.Params)
 	}
 }
 
@@ -726,7 +832,7 @@ func TestParser_init(t *testing.T) {
 func TestParser_Unmarshal_InitError(t *testing.T) {
 	query := &errorQueryEncoder{errorAt: 2}
 	parser := NewParser(WithQueryEncoder(query))
-	v := &TestUnhandled{}
+	v := &TestMapStructValue{}
 	var data = "Id=1&b=a"
 	err := parser.Unmarshal([]byte(data), v)
 	if err == nil || !errors.Is(err, errQueryEncoder) {
@@ -737,7 +843,7 @@ func TestParser_Unmarshal_InitError(t *testing.T) {
 func TestParser_Unmarshal_NonPointer(t *testing.T) {
 	parser := NewParser()
 	var data = "Id=1&b=a"
-	v := TestUnhandled{}
+	v := TestMapStructValue{}
 	err := parser.Unmarshal([]byte(data), v)
 	var errUnmarshal ErrInvalidUnmarshalError
 	if !errors.As(err, &errUnmarshal) {
@@ -750,7 +856,7 @@ func TestParser_UnmarshalValues_NonPointer(t *testing.T) {
 	data := url.Values{}
 	data.Set("Id", "1")
 	data.Set("b", "a")
-	v := TestUnhandled{}
+	v := TestMapStructValue{}
 	err := parser.UnmarshalValues(data, v)
 	var errUnmarshal ErrInvalidUnmarshalError
 	if !errors.As(err, &errUnmarshal) {
@@ -787,6 +893,17 @@ func TestParser_Unmarshal_MapValue_DecodeError(t *testing.T) {
 	paramName := ParamNameFromError(err)
 	if paramName != "Id" && paramName != "b" {
 		t.Errorf("unexpected param name: %q", paramName)
+	}
+}
+
+func TestParser_Unmarshal_InvalidMapValueType(t *testing.T) {
+	parser := NewParser()
+	var data = "Id=1&b=2"
+	v := &map[string]interface{}{}
+	err := parser.Unmarshal([]byte(data), v)
+	var errT ErrInvalidMapValueType
+	if !errors.As(err, &errT) {
+		t.Errorf("expected to get a destination value error instead got error: %v", err)
 	}
 }
 

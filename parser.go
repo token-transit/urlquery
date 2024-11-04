@@ -168,10 +168,13 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) (found bool) {
 		return
 	}
 
-	//limited condition of map key and value type
-	//If not meet the condition, will return error
-	if !isAccessMapKeyType(rv.Type().Key().Kind()) || !isAccessMapValueType(rv.Type().Elem().Kind()) {
-		p.err = ErrInvalidMapKeyType{typ: rv.Type()}
+	if !isAccessMapKeyType(rv.Type().Key().Kind()) {
+		p.err = ErrInvalidMapKeyType{key: parentNode, typ: rv.Type()}
+		return
+	}
+
+	if !isAccessMapValueType(rv.Type().Elem()) && !p.canImmediatelyDecode(rv.Type().Elem()) {
+		p.err = ErrInvalidMapValueType{key: parentNode, typ: rv.Type()}
 		return
 	}
 
@@ -182,6 +185,14 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) (found bool) {
 		return
 	}
 
+	decodeImmediately := (isAccessMapKeyType(rv.Type().Elem().Kind()) || p.canImmediatelyDecode(rv.Type().Elem()))
+	// For cases where the map value cannot immediately be decoded
+	// (i.e. it's a non-decodable composite value), we need an addressable value
+	// (i.e. CanSet returns true). This is because map values in go are not addressable.
+	// The easiest way to get an addressable value is to create a pointer to the map
+	// value type that we can reuse for each map value
+	reflectValuePtr := reflect.New(rv.Type().Elem())
+	reflectMapValueZero := reflect.Zero(rv.Type().Elem())
 	mapReflect := reflect.MakeMapWithSize(rv.Type(), size)
 	for k := range matches {
 		reflectKey, err := p.decode(rv.Type().Key(), k)
@@ -190,18 +201,33 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) (found bool) {
 			return
 		}
 
-		value, ok := p.get(p.genNextParentNode(parentNode, k))
-		if !ok {
-			continue
+		nextNode := p.genNextParentNode(parentNode, k)
+		var reflectValue reflect.Value
+		if decodeImmediately {
+			value, ok := p.get(nextNode)
+			if !ok {
+				continue
+			}
+			found = true
+			reflectValue, err = p.decode(rv.Type().Elem(), value)
+			if err != nil {
+				p.err = ErrInvalidParamValue{val: value, key: keyName(parentNode, k), err: err}
+				return
+			}
+		} else {
+			// Reset map value to type's zero value so we don't pass in
+			// contents from previous round that could include pointers
+			reflectValuePtr.Elem().Set(reflectMapValueZero)
+			valFound := p.parse(reflectValuePtr, nextNode)
+			if p.err != nil {
+				return
+			}
+			if !valFound {
+				continue
+			}
+			found = true
+			reflectValue = reflectValuePtr.Elem()
 		}
-
-		found = true
-		reflectValue, err := p.decode(rv.Type().Elem(), value)
-		if err != nil {
-			p.err = ErrInvalidParamValue{val: value, key: keyName(parentNode, k), err: err}
-			return
-		}
-
 		mapReflect.SetMapIndex(reflectKey, reflectValue)
 	}
 	// actually we only want to replace the nil map if we actually found a value in the map.
