@@ -86,6 +86,11 @@ func (tem testEncodedMap) MarshalQueryParam() string {
 	return sb.String()
 }
 
+type testInnerParamStruct struct {
+	InnerParamString string         `query:"inner_param_string"`
+	InnerParamStruct testParseChild `query:"inner_param_struct"`
+}
+
 type testParseInfo struct {
 	Id               int
 	Name             string           `query:"name"`
@@ -112,6 +117,7 @@ type testParseInfo struct {
 	EncodedMapPtr    *testEncodedMap         `query:"tem_ptr"`
 	StrArray3        testStrArray3           `query:"strarr3"`
 	IgnoreDecoder    testIgnoreDecoder       `query:"ignore_decoder"`
+	InnerParam       testInnerParamStruct    `query:"_"`
 }
 
 type testReplacementTimeDecoder struct{}
@@ -181,7 +187,7 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 		"&Params[120]=1&Params[121]=2&status=1&UintPtr=300&tags[]=1&tags[]=2&Int64=64&Uint=22&Uint32=5&Float32=1.3" +
 		"&Float64=5.64&Bool=0&inter=ss&time=2024-01-02T18:30:22Z&time_ptr=2024-01-03T11:00:01Z&also_time=2024-01-02T03:04:05Z" +
 		"&encoded_string=foo&encoded_string_ptr=bar&tem=" + tem.MarshalQueryParam() + "&tem_ptr=" + tem.MarshalQueryParam() +
-		"&strarr3=foo,bar,baz&ignore_decoder[0]=foo&ignore_decoder[2]=baz"
+		"&strarr3=foo,bar,baz&ignore_decoder[0]=foo&ignore_decoder[2]=baz&inner_param_string=abc&inner_param_struct[desc]=testDesc"
 	data = encodeSquareBracket(data)
 	v := &testParseInfo{}
 	err := Unmarshal([]byte(data), v)
@@ -274,6 +280,9 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 	}
 	if len(v.IgnoreDecoder) != 3 || v.IgnoreDecoder[0] != "foo" || v.IgnoreDecoder[2] != "baz" {
 		t.Errorf("invalid parse of IgnoreDecoder: %+v", v.IgnoreDecoder)
+	}
+	if v.InnerParam.InnerParamString != "abc" || v.InnerParam.InnerParamStruct.Description != "testDesc" {
+		t.Errorf("invalid parse of InnerParam: %+v", v.InnerParam)
 	}
 }
 

@@ -296,6 +296,8 @@ func (p *parser) parseForStruct(rv reflect.Value, parentNode string) (found bool
 		name := t.getName()
 		if name == "" {
 			name = ft.Name
+		} else if name == "_" {
+			name = ""
 		}
 
 		nodeName := p.genNextParentNode(parentNode, name)
