@@ -17,6 +17,12 @@ type testParseChild struct {
 	Height      int    `query:"-"`
 }
 
+type testParseChildRequired struct {
+	Description string `query:"desc,required"`
+	Long        uint16 `query:",vip"`
+	Height      int    `query:"-"`
+}
+
 type testParseEncodedString struct {
 	Str string
 }
@@ -377,6 +383,117 @@ func TestParser_UnmarshalValues_NestedStructure(t *testing.T) {
 	}
 	if len(v.IgnoreDecoder) != 3 || v.IgnoreDecoder[0] != "foo" || v.IgnoreDecoder[2] != "baz" {
 		t.Errorf("invalid parse of IgnoreDecoder: %+v", v.IgnoreDecoder)
+	}
+}
+
+func TestParser_Unmarshal_MissingRequiredFields(t *testing.T) {
+	testCases := []struct {
+		data         string
+		input        interface{}
+		missingParam string
+	}{{
+		data: "",
+		input: &struct {
+			Str string `query:"str,required"`
+		}{},
+		missingParam: "str",
+	}, {
+		data: "",
+		input: &struct {
+			I64 int64 `query:"i64,required"`
+		}{},
+		missingParam: "i64",
+	}, {
+		data: "strszl=foo",
+		input: &struct {
+			Strs []string `query:"strs,required"`
+		}{},
+		missingParam: "strs",
+	}, {
+		data: "",
+		input: &struct {
+			Children []testParseChildRequired `query:"children"`
+		}{},
+		missingParam: "",
+	}, {
+		data: "",
+		input: &struct {
+			Children []testParseChildRequired `query:"children,required"`
+		}{},
+		missingParam: "children",
+	}, {
+		data: "children[3][Long]=0",
+		input: &struct {
+			Children []testParseChildRequired `query:"children"`
+		}{},
+		missingParam: "children[3][desc]",
+	}, {
+		data: "children[3][Long]=0&children[3][desc][foo]=sdf",
+		input: &struct {
+			Children []testParseChildRequired `query:"children"`
+		}{},
+		missingParam: "children[3][desc]",
+	}, {
+		data: "",
+		input: &struct {
+			Child *testParseChildRequired `query:"child,required"`
+		}{},
+		missingParam: "child",
+	}, {
+		data: "",
+		input: &struct {
+			Child *testParseChildRequired `query:"child"`
+		}{},
+		missingParam: "",
+	}, {
+		data: "child[Long]=0",
+		input: &struct {
+			Child *testParseChildRequired `query:"child"`
+		}{},
+		missingParam: "child[desc]",
+	}, {
+		data: "",
+		input: &struct {
+			Child testParseChildRequired `query:"child,required"`
+		}{},
+		missingParam: "child",
+	}, {
+		data: "",
+		input: &struct {
+			Child testParseChildRequired `query:"child"`
+		}{},
+		missingParam: "child[desc]",
+	}, {
+		data: "child[Long]=0",
+		input: &struct {
+			Child testParseChildRequired `query:"child"`
+		}{},
+		missingParam: "child[desc]",
+	}, {
+		data: "metadata[foo]=bar",
+		input: &struct {
+			Metadata map[string]string `query:"metadata,required"`
+		}{},
+		missingParam: "",
+	}, {
+		data: "",
+		input: &struct {
+			Metadata map[string]string `query:"metadata,required"`
+		}{},
+		missingParam: "metadata",
+	},
+	}
+	for i, tc := range testCases {
+		if err := Unmarshal([]byte(tc.data), tc.input); err == nil {
+			if tc.missingParam == "" {
+				continue
+			}
+			t.Errorf("testCases[%d]: expected missing param error for %q", i, tc.missingParam)
+		} else if !IsMissingParamError(err) {
+			t.Errorf("testCases[%d]: expected missing param error but got error: %v", i, err)
+		} else if paramName := ParamNameFromError(err); paramName != tc.missingParam {
+			t.Errorf("testCases[%d]: expected missing param %q but got missing param %q", i, tc.missingParam, paramName)
+		}
 	}
 }
 

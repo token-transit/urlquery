@@ -19,7 +19,22 @@ func ParamNameFromError(err error) string {
 	if errors.As(err, &errValue) {
 		return errValue.key
 	}
+	var errMissing ErrMissingRequiredParam
+	if errors.As(err, &errMissing) {
+		return errMissing.key
+	}
 	return ""
+}
+
+func IsMissingParamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errMissing ErrMissingRequiredParam
+	if errors.As(err, &errMissing) {
+		return true
+	}
+	return false
 }
 
 type ErrInvalidParamKey struct {
@@ -33,6 +48,14 @@ func (e ErrInvalidParamKey) Error() string {
 
 func (e ErrInvalidParamKey) Unwrap() error {
 	return e.err
+}
+
+type ErrMissingRequiredParam struct {
+	key string
+}
+
+func (e ErrMissingRequiredParam) Error() string {
+	return fmt.Sprintf("missing required param %q", e.key)
 }
 
 // An ErrInvalidParamValue includes name of the param being decoded.

@@ -14,6 +14,30 @@ func TestErrUnhandledType_Error(t *testing.T) {
 	}
 }
 
+func TestIsMissingParamError(t *testing.T) {
+	testCases := []struct {
+		err    error
+		result bool
+	}{{
+		err:    nil,
+		result: false,
+	}, {
+		err:    ErrInvalidParamKey{key: "foo"},
+		result: false,
+	}, {
+		err:    ErrInvalidParamValue{key: "foo", val: "bar"},
+		result: false,
+	}, {
+		err:    ErrMissingRequiredParam{key: "foo"},
+		result: true,
+	}}
+	for i, tc := range testCases {
+		if res := IsMissingParamError(tc.err); res != tc.result {
+			t.Errorf("testCases[%d]: unexpected IsMissingParamError for %v: expected %t, got %t", i, tc.err, tc.result, res)
+		}
+	}
+}
+
 func TestParamNameFromError(t *testing.T) {
 	testCases := []struct {
 		err       error
@@ -30,6 +54,9 @@ func TestParamNameFromError(t *testing.T) {
 	}, {
 		err:       ErrInvalidUnmarshalError{},
 		paramName: "",
+	}, {
+		err:       ErrMissingRequiredParam{key: "foo"},
+		paramName: "foo",
 	}}
 	for i, tc := range testCases {
 		if paramName := ParamNameFromError(tc.err); paramName != tc.paramName {
@@ -49,6 +76,13 @@ func TestErrInvalidParamValue(t *testing.T) {
 	err := ErrInvalidParamValue{key: "foo", val: "bar"}
 	if errStr := err.Error(); !strings.Contains(errStr, "foo") || !strings.Contains(errStr, "bar") {
 		t.Error("expected invalid param error to contain name of param and name of value")
+	}
+}
+
+func TestErrMissingRequiredParam(t *testing.T) {
+	err := ErrMissingRequiredParam{key: "foo"}
+	if errStr := err.Error(); !strings.Contains(errStr, "foo") {
+		t.Error("expected missing param to contain name of missing param")
 	}
 }
 
