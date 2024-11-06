@@ -31,6 +31,10 @@ func ParamNameFromError(err error) string {
 	if errors.As(err, &errValueType) {
 		return errValueType.key
 	}
+	var errAmbiguous ErrAmbiguousParseForParam
+	if errors.As(err, &errAmbiguous) {
+		return errAmbiguous.key
+	}
 	return ""
 }
 
@@ -70,7 +74,8 @@ func IsInvalidDestinationValueError(err error) bool {
 	if errors.As(err, &errUnhandledType) {
 		return true
 	}
-	return false
+	var errAmbiguous ErrAmbiguousParseForParam
+	return errors.As(err, &errAmbiguous)
 }
 
 type ErrInvalidParamKey struct {
@@ -165,4 +170,12 @@ type ErrInvalidMapValueType struct {
 
 func (e ErrInvalidMapValueType) Error() string {
 	return fmt.Sprintf("failed to handle map value type(%s) for key %q", e.typ.String(), e.key)
+}
+
+type ErrAmbiguousParseForParam struct {
+	key string
+}
+
+func (e ErrAmbiguousParseForParam) Error() string {
+	return fmt.Sprintf("key %q maps to multiple fields in destination value", e.key)
 }

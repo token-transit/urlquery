@@ -10,9 +10,14 @@ import (
 	"sync"
 )
 
+type paramValue struct {
+	val      string
+	consumed bool
+}
+
 // parser from URL Query string to go structure
 type parser struct {
-	container      map[string]string
+	container      map[string]paramValue
 	err            error
 	opts           options
 	mutex          sync.Mutex
@@ -63,7 +68,7 @@ func (p *parser) init(data []byte) (err error) {
 				}
 			}
 
-			p.container[ns[0]] = ns[1]
+			p.container[ns[0]] = paramValue{ns[1], false}
 		}
 	}
 	return
@@ -76,10 +81,10 @@ func (p *parser) initValues(urlValues url.Values) {
 			key = key[:l-2]
 			for i, v := range values {
 				newKey := key + "[" + strconv.Itoa(i) + "]"
-				p.container[newKey] = v
+				p.container[newKey] = paramValue{v, false}
 			}
 		} else {
-			p.container[key] = values[0]
+			p.container[key] = paramValue{values[0], false}
 		}
 	}
 }
@@ -204,7 +209,10 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) (found bool) {
 		nextNode := p.genNextParentNode(parentNode, k)
 		var reflectValue reflect.Value
 		if decodeImmediately {
-			value, ok := p.get(nextNode)
+			value, ok := p.consume(nextNode)
+			if p.err != nil {
+				return
+			}
 			if !ok {
 				continue
 			}
@@ -327,7 +335,7 @@ func (p *parser) parseValue(rv reflect.Value, parentNode string) (found bool) {
 		return
 	}
 
-	value, ok := p.get(parentNode)
+	value, ok := p.consume(parentNode)
 	if !ok {
 		return
 	}
@@ -436,10 +444,19 @@ func (p *parser) lookupForSlice(prefix string) (map[int]bool, error) {
 	return data, nil
 }
 
-// get value by key from container variable which is map struct
-func (p *parser) get(key string) (string, bool) {
+// get value by key from container variable and set that it is consumed
+// if value has already been consumed, set p.err
+func (p *parser) consume(key string) (string, bool) {
 	v, ok := p.container[key]
-	return v, ok
+	if ok {
+		if v.consumed {
+			p.err = ErrAmbiguousParseForParam{key: key}
+			return "", false
+		}
+		v.consumed = true
+		p.container[key] = v
+	}
+	return v.val, ok
 }
 
 // self-defined valueDecode function
@@ -457,7 +474,7 @@ func (p *parser) UnmarshalValues(values url.Values, v interface{}) (err error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	p.container = map[string]string{}
+	p.container = map[string]paramValue{}
 	p.err = nil
 	p.resetQueryEncoder()
 
@@ -479,7 +496,7 @@ func (p *parser) Unmarshal(data []byte, v interface{}) (err error) {
 	defer p.mutex.Unlock()
 
 	//for duplicate use
-	p.container = map[string]string{}
+	p.container = map[string]paramValue{}
 	p.err = nil
 	p.resetQueryEncoder()
 

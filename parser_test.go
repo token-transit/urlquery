@@ -537,6 +537,25 @@ func TestParser_Unmarshal_ManyCases(t *testing.T) {
 	type typStrPtrMap struct {
 		StrPtrMap *map[string]*string `query:"strPtrMap,required"`
 	}
+	type typAmbiguousFields1 struct {
+		Amb1 string `query:"ambiguous"`
+		Amb2 string `query:"ambiguous"`
+	}
+	type typInnerAmbiguousField struct {
+		Amb string `query:"ambiguous"`
+	}
+	type typAmbiguousFields2 struct {
+		Amb1   string                 `query:"ambiguous"`
+		Nested typInnerAmbiguousField `query:"_"`
+	}
+	type typAmbiguousFields3 struct {
+		NamelessField map[string]testParseChild `query:"_"`
+		Child         testParseChild            `query:"child"`
+	}
+	type typAmbiguousFields4 struct {
+		Anything      string
+		NamelessField map[string]string `query:"_"`
+	}
 	type testCase struct {
 		data           string
 		input          interface{}
@@ -601,6 +620,26 @@ func TestParser_Unmarshal_ManyCases(t *testing.T) {
 		input:          &typStrPtrMap{},
 		expectedOutput: &typStrPtrMap{StrPtrMap: &map[string]*string{"foo": stringP("bar"), "baz": stringP("quux")}},
 		errorCheck:     noError,
+	}, {
+		data:       "ambiguous=foo",
+		input:      &typAmbiguousFields1{},
+		errorCheck: IsInvalidDestinationValueError,
+		paramName:  "ambiguous",
+	}, {
+		data:       "ambiguous=foo",
+		input:      &typAmbiguousFields2{},
+		errorCheck: IsInvalidDestinationValueError,
+		paramName:  "ambiguous",
+	}, {
+		data:       "child[desc]=foo",
+		input:      &typAmbiguousFields3{},
+		errorCheck: IsInvalidDestinationValueError,
+		paramName:  "child[desc]",
+	}, {
+		data:       "Anything=foo",
+		input:      &typAmbiguousFields4{},
+		errorCheck: IsInvalidDestinationValueError,
+		paramName:  "Anything",
 	}}
 	for i, tc := range testCases {
 		if err := Unmarshal([]byte(tc.data), tc.input); tc.errorCheck != nil && !tc.errorCheck(err) {

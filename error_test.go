@@ -87,6 +87,9 @@ func TestIsInvalidDestinationValueError(t *testing.T) {
 	}, {
 		err:    ErrUnhandledType{typ: reflect.TypeOf("")},
 		result: true,
+	}, {
+		err:    ErrAmbiguousParseForParam{key: "foo"},
+		result: true,
 	}}
 	for i, tc := range testCases {
 		if res := IsInvalidDestinationValueError(tc.err); res != tc.result {
