@@ -294,7 +294,7 @@ func (p *parser) canImmediatelyDecode(typ reflect.Type) bool {
 			return true
 		}
 	}
-	return false
+	return isDecodable(typ)
 }
 
 // parse text to specified-type value
@@ -310,6 +310,10 @@ func (p *parser) decode(typ reflect.Type, value string) (v reflect.Value, err er
 			if d.DecodesType(typ) {
 				return d.Decode(value)
 			}
+		}
+		// Next check for
+		if rv, err, ok := maybeDecodeableDecode(typ, value); ok {
+			return rv, err
 		}
 	}
 	decodeFunc := p.getDecodeFunc(typ.Kind())
