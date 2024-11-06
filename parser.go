@@ -11,13 +11,16 @@ import (
 
 // parser from URL Query string to go structure
 type parser struct {
-	container     map[string]string
-	err           error
-	opts          options
-	mutex         sync.Mutex
-	queryEncoder  QueryEncoder
-	decodeFuncMap map[reflect.Kind]valueDecode
+	container      map[string]string
+	err            error
+	opts           options
+	mutex          sync.Mutex
+	queryEncoder   QueryEncoder
+	decodeFuncMap  map[reflect.Kind]valueDecode
+	customDecoders []ValueDecoder
 }
+
+var anyType reflect.Type = reflect.TypeOf(new(interface{})).Elem()
 
 // NewParser make a new parser object
 // do some option initialization
@@ -85,7 +88,15 @@ func (p *parser) parse(rv reflect.Value, parentNode string) {
 		return
 	}
 
-	switch rv.Kind() {
+	// Certain types are not meant to be expanded and should
+	// just be decoded immediately
+	kind := rv.Kind()
+	if kind != reflect.Invalid && p.canImmediatelyDecode(rv.Type()) {
+		p.parseValue(rv, parentNode)
+		return
+	}
+
+	switch kind {
 	case reflect.Ptr:
 		p.parseForPrt(rv, parentNode)
 	case reflect.Interface:
@@ -249,17 +260,58 @@ func (p *parser) parseValue(rv reflect.Value, parentNode string) {
 		return
 	}
 
-	v, err := p.decode(rv.Type(), value)
+	typ := rv.Type()
+	v, err := p.decode(typ, value)
 	if err != nil {
 		p.err = ErrInvalidParamValue{key: parentNode, val: value, err: err}
 		return
 	}
 
+	// This allows converters to handle types as long as they can be converted
+	// into the proper type.
+	if t := v.Type(); t != typ {
+		if rv.CanConvert(t) {
+			v = v.Convert(typ)
+		} else {
+			p.err = ErrUnhandledType{rv.Type()}
+			return
+		}
+	}
 	rv.Set(v)
+}
+
+func (p *parser) canImmediatelyDecode(typ reflect.Type) bool {
+	if typ == anyType {
+		return false
+	}
+	for _, d := range p.customDecoders {
+		if d.DecodesType(typ) {
+			return true
+		}
+	}
+	for _, d := range builtinDecoders {
+		if d.DecodesType(typ) {
+			return true
+		}
+	}
+	return false
 }
 
 // parse text to specified-type value
 func (p *parser) decode(typ reflect.Type, value string) (v reflect.Value, err error) {
+	if typ != reflect.TypeOf(anyType) {
+		// Custom decoders override everything
+		for _, d := range p.customDecoders {
+			if d.DecodesType(typ) {
+				return d.Decode(value)
+			}
+		}
+		for _, d := range builtinDecoders {
+			if d.DecodesType(typ) {
+				return d.Decode(value)
+			}
+		}
+	}
 	decodeFunc := p.getDecodeFunc(typ.Kind())
 	if decodeFunc == nil {
 		err = ErrUnhandledType{typ: typ}
@@ -311,6 +363,12 @@ func (p *parser) get(key string) (string, bool) {
 // self-defined valueDecode function
 func (p *parser) RegisterDecodeFunc(kind reflect.Kind, decode valueDecode) {
 	p.decodeFuncMap[kind] = decode
+}
+
+func (p *parser) RegisterValueDecoder(valueDecoder ValueDecoder) {
+	if valueDecoder != nil {
+		p.customDecoders = append(p.customDecoders, valueDecoder)
+	}
 }
 
 // Unmarshal is supposed to decode string to go structure

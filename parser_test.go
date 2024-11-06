@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type testParseChild struct {
@@ -13,6 +14,8 @@ type testParseChild struct {
 	Long        uint16 `query:",vip"`
 	Height      int    `query:"-"`
 }
+
+type testTimeType time.Time
 
 type testParseInfo struct {
 	Id       int
@@ -30,7 +33,32 @@ type testParseInfo struct {
 	Float32  float32
 	Float64  float64
 	Bool     bool
-	Inter    interface{} `query:"inter"`
+	Inter    interface{}  `query:"inter"`
+	Time     time.Time    `query:"time"`
+	TimePtr  *time.Time   `query:"time_ptr"`
+	AlsoTime testTimeType `query:"also_time"`
+}
+
+type testReplacementTimeDecoder struct{}
+
+func (d testReplacementTimeDecoder) DecodesType(typ reflect.Type) bool {
+	return TimeDecoder{}.DecodesType(typ)
+}
+func (d testReplacementTimeDecoder) Decode(s string) (reflect.Value, error) {
+	t, err := time.Parse("2006-01-02", s)
+	if err == nil {
+		return reflect.ValueOf(t), nil
+	}
+	return TimeDecoder{}.Decode(s)
+}
+
+type testBadDecoder struct{}
+
+func (d testBadDecoder) DecodesType(typ reflect.Type) bool {
+	return TimeDecoder{}.DecodesType(typ)
+}
+func (d testBadDecoder) Decode(s string) (reflect.Value, error) {
+	return reflect.ValueOf(s), nil
 }
 
 type errorQueryEncoder struct {
@@ -73,7 +101,7 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 	var data = "Id=1&name=test&child[desc]=c1&child[Long]=10&childPtr[Long]=2&childPtr[Description]=b" +
 		"&children[0][desc]=d1&children[1][Long]=12&children[5][desc]=d5&children[5][Long]=50&desc=rtt" +
 		"&Params[120]=1&Params[121]=2&status=1&UintPtr=300&tags[]=1&tags[]=2&Int64=64&Uint=22&Uint32=5&Float32=1.3" +
-		"&Float64=5.64&Bool=0&inter=ss"
+		"&Float64=5.64&Bool=0&inter=ss&time=2024-01-02T18:30:22Z&time_ptr=2024-01-03T11:00:01Z&also_time=2024-01-02T03:04:05Z"
 	data = encodeSquareBracket(data)
 	v := &testParseInfo{}
 	err := Unmarshal([]byte(data), v)
@@ -132,6 +160,20 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 
 	if len(v.Tags) != 2 {
 		t.Error("Tags wrong")
+	}
+	testTime := time.Date(2024, 1, 2, 18, 30, 22, 0, time.UTC)
+	if !v.Time.Equal(testTime) {
+		t.Errorf("time is wrong: expected %v, got %v", testTime, v.Time)
+	}
+	testTimePtr := time.Date(2024, 1, 3, 11, 0, 1, 0, time.UTC)
+	if v.TimePtr == nil {
+		t.Errorf("time_ptr is nil")
+	} else if !(*v.TimePtr).Equal(testTimePtr) {
+		t.Errorf("time_ptr is wrong: expected %v, got %v", testTimePtr, *v.TimePtr)
+	}
+	alsoTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if !time.Time(v.AlsoTime).Equal(alsoTime) {
+		t.Errorf("time is wrong: expected %v, got %v", alsoTime, v.AlsoTime)
 	}
 }
 
@@ -277,6 +319,64 @@ func TestParser_Unmarshal_UnhandledType2(t *testing.T) {
 	}
 }
 
+type testDate struct {
+	Date time.Time `query:"date"`
+}
+
+func TestParser_UnmarshalCustomDecoder(t *testing.T) {
+	testCases := []struct {
+		customDecoders []ValueDecoder
+		data           string
+		input          interface{}
+		expectedOutput interface{}
+		paramName      string
+	}{{
+		customDecoders: []ValueDecoder{testReplacementTimeDecoder{}},
+		data:           "date=2024-01-01",
+		input:          &testDate{},
+		expectedOutput: &testDate{time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}, {
+		customDecoders: []ValueDecoder{testReplacementTimeDecoder{}},
+		data:           "date=2024-01-02T03:04:05Z",
+		input:          &testDate{},
+		expectedOutput: &testDate{time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)},
+	}, {
+		customDecoders: []ValueDecoder{testReplacementTimeDecoder{}},
+		data:           "date=dasdfasdf",
+		input:          &testDate{},
+		paramName:      "date",
+	}, {
+		customDecoders: []ValueDecoder{testReplacementTimeDecoder{}},
+		data:           "",
+		input:          &testDate{},
+		expectedOutput: &testDate{},
+	}, {
+		customDecoders: []ValueDecoder{testBadDecoder{}},
+		data:           "date=2024-01-02T03:04:05Z",
+		input:          &testDate{},
+		paramName:      "", // no expected output or paramName means error but no param name
+	}}
+	for i, tc := range testCases {
+		p := NewParser()
+		for _, vd := range tc.customDecoders {
+			p.RegisterValueDecoder(vd)
+		}
+		p.Unmarshal([]byte(tc.data), tc.input)
+		if p.err == nil {
+			if tc.expectedOutput != nil && !reflect.DeepEqual(tc.input, tc.expectedOutput) {
+				t.Errorf("testCases[%d]: unexpected output: expected %+v, got %+v", i, tc.expectedOutput, tc.input)
+			}
+			if tc.paramName != "" {
+				t.Errorf("testCases[%d]: expected an error for param %q", i, tc.paramName)
+			}
+		} else if tc.expectedOutput != nil {
+			t.Errorf("testCases[%d]: unexpected error: %v", i, p.err)
+		} else if pn := ParamNameFromError(p.err); tc.paramName != "" && tc.paramName != pn {
+			t.Errorf("testCases[%d]: unexpected param error: expected error for %q, got error for %q ", i, tc.paramName, pn)
+		}
+	}
+}
+
 func TestParser_init(t *testing.T) {
 	query := &errorQueryEncoder{errorAt: 1}
 	parser := NewParser(WithQueryEncoder(query))
@@ -406,8 +506,8 @@ func TestParser_parseForSlice_CanSet(t *testing.T) {
 	parser.parseForSlice(v, "")
 }
 
-//mock multi-layer nested structure,
-//BenchmarkUnmarshal-4   	  208219	     14873 ns/op
+// mock multi-layer nested structure,
+// BenchmarkUnmarshal-4   	  208219	     14873 ns/op
 func BenchmarkUnmarshal(b *testing.B) {
 	var data = "Id=1&name=test&child[desc]=c1&child[Long]=10&childPtr[Long]=2&childPtr[Description]=b" +
 		"&children[0][desc]=d1&children[1][Long]=12&children[5][desc]=d5&children[5][Long]=50&desc=rtt" +

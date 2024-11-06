@@ -3,7 +3,32 @@ package urlquery
 import (
 	"reflect"
 	"strconv"
+	"time"
 )
+
+// ValueDecoder are things that can decode string into a particular type
+// The DecodesType function returns whether the value decoder can
+// handle a particular type.
+type ValueDecoder interface {
+	DecodesType(reflect.Type) bool
+	Decode(value string) (reflect.Value, error)
+}
+
+var builtinDecoders = []ValueDecoder{TimeDecoder{}}
+
+type TimeDecoder struct{}
+
+func (TimeDecoder) Decode(value string) (reflect.Value, error) {
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	return reflect.ValueOf(t), nil
+}
+
+func (TimeDecoder) DecodesType(t reflect.Type) bool {
+	return reflect.TypeOf(time.Time{}).ConvertibleTo(t)
+}
 
 // A valueDecode is a converter from string to go basic structure
 type valueDecode func(string) (reflect.Value, error)
