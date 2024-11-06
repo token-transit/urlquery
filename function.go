@@ -34,8 +34,12 @@ func isAccessMapKeyType(kind reflect.Kind) bool {
 }
 
 // check if reflect.Kind of map's value is valid
-func isAccessMapValueType(kind reflect.Kind) bool {
-	return isAccessMapKeyType(kind)
+func isAccessMapValueType(typ reflect.Type) bool {
+	kind := typ.Kind()
+	if kind == reflect.Pointer {
+		kind = typ.Elem().Kind()
+	}
+	return isAccessMapKeyType(kind) || kind == reflect.Struct || kind == reflect.Map || kind == reflect.Slice || kind == reflect.Array
 }
 
 // students[0][id] -> students, [0][id]
