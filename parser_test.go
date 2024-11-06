@@ -3,6 +3,7 @@ package urlquery
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -178,6 +179,115 @@ func TestParser_Unmarshal_NestedStructure(t *testing.T) {
 	data = encodeSquareBracket(data)
 	v := &testParseInfo{}
 	err := Unmarshal([]byte(data), v)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	if v.Id != 1 {
+		t.Error("Id wrong")
+	}
+
+	if v.Name != "test" {
+		t.Error("Name wrong")
+	}
+
+	if v.Child.Description != "c1" || v.Child.Long != 10 || v.Child.Height != 0 {
+		t.Error("Child wrong")
+	}
+
+	if v.ChildPtr == nil || v.ChildPtr.Description != "" || v.ChildPtr.Long != 2 || v.ChildPtr.Height != 0 {
+		t.Error("ChildPtr wrong")
+	}
+
+	if len(v.Children) != 6 {
+		t.Error("Children's length is wrong")
+	}
+
+	if v.Children[0].Description != "d1" {
+		t.Error("Children[0] wrong")
+	}
+
+	if v.Children[1].Description != "" || v.Children[1].Long != 12 {
+		t.Error("Children[1] wrong")
+	}
+
+	if v.Children[2].Description != "" || v.Children[3].Description != "" || v.Children[4].Description != "" {
+		t.Error("Children[2,3,4] wrong")
+	}
+
+	if v.Children[5].Description != "d5" || v.Children[5].Long != 50 || v.Children[5].Height != 0 {
+		t.Error("Children[5] wrong")
+	}
+
+	if len(v.Params) != 2 || v.Params[120] != 1 || v.Params[121] != 2 {
+		t.Error("Params wrong")
+	}
+
+	if v.status != false {
+		t.Error("status wrong")
+	}
+
+	if v.UintPtr != uintptr(300) {
+		t.Error("UintPtr wrong")
+	}
+
+	if len(v.Tags) != 2 {
+		t.Error("Tags wrong")
+	}
+	testTime := time.Date(2024, 1, 2, 18, 30, 22, 0, time.UTC)
+	if !v.Time.Equal(testTime) {
+		t.Errorf("time is wrong: expected %v, got %v", testTime, v.Time)
+	}
+	testTimePtr := time.Date(2024, 1, 3, 11, 0, 1, 0, time.UTC)
+	if v.TimePtr == nil {
+		t.Errorf("time_ptr is nil")
+	} else if !(*v.TimePtr).Equal(testTimePtr) {
+		t.Errorf("time_ptr is wrong: expected %v, got %v", testTimePtr, *v.TimePtr)
+	}
+	alsoTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if !time.Time(v.AlsoTime).Equal(alsoTime) {
+		t.Errorf("time is wrong: expected %v, got %v", alsoTime, v.AlsoTime)
+	}
+	if v.EncodedString.Str != "foo" {
+		t.Errorf("encoded string is wrong: expected %q, got %q", "foo", v.EncodedString.Str)
+	}
+	if v.EncodedStringPtr == nil {
+		t.Error("encoded string pointer is nil")
+	} else if v.EncodedStringPtr.Str != "bar" {
+		t.Errorf("encoded string pointer is wrong: expected %q, got %q", "bar", v.EncodedStringPtr.Str)
+	}
+	if len(v.EncodedMap) != 2 {
+		t.Error("invalid parse of encoded map")
+	}
+	if v.EncodedMapPtr == nil || len(*v.EncodedMapPtr) != 2 {
+		t.Error("invalid parse of encoded map pointer")
+	}
+	if v.StrArray3[0] != "foo" || v.StrArray3[1] != "bar" || v.StrArray3[2] != "baz" {
+		t.Errorf("invalid parse of testStrArray3: %+v", v.StrArray3)
+	}
+	if len(v.IgnoreDecoder) != 3 || v.IgnoreDecoder[0] != "foo" || v.IgnoreDecoder[2] != "baz" {
+		t.Errorf("invalid parse of IgnoreDecoder: %+v", v.IgnoreDecoder)
+	}
+}
+
+func TestParser_UnmarshalValues_NestedStructure(t *testing.T) {
+	tem := testEncodedMap{}
+	tem["foo"] = "bar"
+	tem["baz"] = "quux"
+	var data = "Id=1&name=test&child[desc]=c1&child[Long]=10&childPtr[Long]=2&childPtr[Description]=b" +
+		"&children[0][desc]=d1&children[1][Long]=12&children[5][desc]=d5&children[5][Long]=50&desc=rtt" +
+		"&Params[120]=1&Params[121]=2&status=1&UintPtr=300&tags[]=1&tags[]=2&Int64=64&Uint=22&Uint32=5&Float32=1.3" +
+		"&Float64=5.64&Bool=0&inter=ss&time=2024-01-02T18:30:22Z&time_ptr=2024-01-03T11:00:01Z&also_time=2024-01-02T03:04:05Z" +
+		"&encoded_string=foo&encoded_string_ptr=bar&tem=" + tem.MarshalQueryParam() + "&tem_ptr=" + tem.MarshalQueryParam() +
+		"&strarr3=foo,bar,baz&ignore_decoder[0]=foo&ignore_decoder[2]=baz"
+	data = encodeSquareBracket(data)
+	v := &testParseInfo{}
+	values, err := url.ParseQuery(data)
+	if err != nil {
+		t.Errorf("unexpected error parsing query")
+	}
+	err = UnmarshalValues(values, v)
 
 	if err != nil {
 		t.Error(err)
@@ -512,6 +622,19 @@ func TestParser_Unmarshal_NonPointer(t *testing.T) {
 	var data = "Id=1&b=a"
 	v := TestUnhandled{}
 	err := parser.Unmarshal([]byte(data), v)
+	var errUnmarshal ErrInvalidUnmarshalError
+	if !errors.As(err, &errUnmarshal) {
+		t.Error("unmatched error")
+	}
+}
+
+func TestParser_UnmarshalValues_NonPointer(t *testing.T) {
+	parser := NewParser()
+	data := url.Values{}
+	data.Set("Id", "1")
+	data.Set("b", "a")
+	v := TestUnhandled{}
+	err := parser.UnmarshalValues(data, v)
 	var errUnmarshal ErrInvalidUnmarshalError
 	if !errors.As(err, &errUnmarshal) {
 		t.Error("unmatched error")
