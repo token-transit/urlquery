@@ -3,6 +3,7 @@ package urlquery
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -10,6 +11,44 @@ func TestErrUnhandledType_Error(t *testing.T) {
 	err := ErrUnhandledType{typ: reflect.TypeOf("s")}
 	if err.Error() != "failed to unhandled type(string)" {
 		t.Error(err.Error())
+	}
+}
+
+func TestParamNameFromError(t *testing.T) {
+	testCases := []struct {
+		err       error
+		paramName string
+	}{{
+		err:       nil,
+		paramName: "",
+	}, {
+		err:       ErrInvalidParamKey{key: "foo"},
+		paramName: "foo",
+	}, {
+		err:       ErrInvalidParamValue{key: "foo", val: "bar"},
+		paramName: "foo",
+	}, {
+		err:       ErrInvalidUnmarshalError{},
+		paramName: "",
+	}}
+	for i, tc := range testCases {
+		if paramName := ParamNameFromError(tc.err); paramName != tc.paramName {
+			t.Errorf("testCases[%d]: expected param name %q, got %q", i, tc.paramName, paramName)
+		}
+	}
+}
+
+func TestErrInvalidParamKey(t *testing.T) {
+	err := ErrInvalidParamKey{key: "foo"}
+	if errStr := err.Error(); !strings.Contains(errStr, "foo") {
+		t.Error("expected invalid param error to contain name of param")
+	}
+}
+
+func TestErrInvalidParamValue(t *testing.T) {
+	err := ErrInvalidParamValue{key: "foo", val: "bar"}
+	if errStr := err.Error(); !strings.Contains(errStr, "foo") || !strings.Contains(errStr, "bar") {
+		t.Error("expected invalid param error to contain name of param and name of value")
 	}
 }
 

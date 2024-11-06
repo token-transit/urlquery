@@ -2,6 +2,7 @@ package urlquery
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -37,12 +38,12 @@ func (p *parser) init(data []byte) (err error) {
 		if len(ns) > 1 {
 			ns[0], err = p.queryEncoder.UnEscape(ns[0])
 			if err != nil {
-				return
+				return ErrInvalidParamKey{key: ns[0], err: err}
 			}
 
 			ns[1], err = p.queryEncoder.UnEscape(ns[1])
 			if err != nil {
-				return
+				return ErrInvalidParamValue{key: ns[0], val: ns[0], err: err}
 			}
 
 			//If last two characters of key equal `[]`, repack it to `[{i++}]`
@@ -125,6 +126,14 @@ func (p *parser) parseForPrt(rv reflect.Value, parentNode string) {
 	}
 }
 
+// reconstruct key name from parts
+func keyName(prefix string, index string) string {
+	if prefix == "" {
+		return index
+	}
+	return fmt.Sprintf("%s[%s]", prefix, index)
+}
+
 // parse for map value
 func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
 	if !rv.CanSet() {
@@ -149,7 +158,7 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
 	for k := range matches {
 		reflectKey, err := p.decode(rv.Type().Key(), k)
 		if err != nil {
-			p.err = err
+			p.err = ErrInvalidParamKey{key: keyName(parentNode, k), err: err}
 			return
 		}
 
@@ -160,7 +169,7 @@ func (p *parser) parseForMap(rv reflect.Value, parentNode string) {
 
 		reflectValue, err := p.decode(rv.Type().Elem(), value)
 		if err != nil {
-			p.err = err
+			p.err = ErrInvalidParamValue{val: value, key: keyName(parentNode, k), err: err}
 			return
 		}
 
@@ -242,7 +251,7 @@ func (p *parser) parseValue(rv reflect.Value, parentNode string) {
 
 	v, err := p.decode(rv.Type(), value)
 	if err != nil {
-		p.err = err
+		p.err = ErrInvalidParamValue{key: parentNode, val: value, err: err}
 		return
 	}
 
@@ -286,7 +295,7 @@ func (p *parser) lookupForSlice(prefix string) (map[int]bool, error) {
 	for k := range tmp {
 		i, err := strconv.Atoi(k)
 		if err != nil {
-			return nil, err
+			return nil, ErrInvalidParamKey{key: fmt.Sprintf("%s[%s]", prefix, k), err: err}
 		}
 		data[i] = true
 	}
